@@ -222,14 +222,15 @@ func (f *ForecasterService) verifyCredentialsAndPrivileges(ctx context.Context, 
 
 	zap.S().Named("forecaster_service").Info("vCenter credentials verified, checking privileges")
 
-	// Check privileges on the default VM folder (under the datacenter), since
-	// vSphere privileges are typically granted at this level rather than root.
 	finder := find.NewFinder(vimClient, true)
-	dc, err := finder.DefaultDatacenter(verifyCtx)
+	datacenters, err := finder.DatacenterList(verifyCtx, "*")
 	if err != nil {
-		return srvErrors.NewVCenterError(fmt.Errorf("failed to find datacenter: %w", err))
+		return srvErrors.NewVCenterError(fmt.Errorf("failed to list datacenters: %w", err))
 	}
-	finder.SetDatacenter(dc)
+	if len(datacenters) == 0 {
+		return srvErrors.NewVCenterError(fmt.Errorf("no datacenters found"))
+	}
+	finder.SetDatacenter(datacenters[0])
 	vmFolder, err := finder.DefaultFolder(verifyCtx)
 	if err != nil {
 		return srvErrors.NewVCenterError(fmt.Errorf("failed to find VM folder: %w", err))

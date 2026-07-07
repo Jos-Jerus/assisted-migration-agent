@@ -219,21 +219,28 @@ func (s *CredentialsService) GetCapabilities(ctx context.Context) (*models.Capab
 	}()
 
 	finder := find.NewFinder(vimClient, false)
-	dc, err := finder.DefaultDatacenter(connCtx)
+	datacenters, err := finder.DatacenterList(connCtx, "*")
 	if err != nil {
-		return nil, srvErrors.NewVCenterError(fmt.Errorf("finding default datacenter: %w", err))
+		return nil, srvErrors.NewVCenterError(fmt.Errorf("listing datacenters: %w", err))
+	}
+	if len(datacenters) == 0 {
+		return nil, srvErrors.NewVCenterError(fmt.Errorf("no datacenters found"))
 	}
 
-	folders, err := dc.Folders(connCtx)
-	if err != nil {
-		return nil, srvErrors.NewVCenterError(fmt.Errorf("getting datacenter folders: %w", err))
-	}
-
-	allRefs := []types.ManagedObjectReference{
-		folders.VmFolder.Reference(),
-		folders.HostFolder.Reference(),
-		folders.DatastoreFolder.Reference(),
-		folders.NetworkFolder.Reference(),
+	var allRefs []types.ManagedObjectReference
+	var vmFolderRefs []types.ManagedObjectReference
+	for _, dc := range datacenters {
+		folders, err := dc.Folders(connCtx)
+		if err != nil {
+			return nil, srvErrors.NewVCenterError(fmt.Errorf("getting datacenter folders for %s: %w", dc.Name(), err))
+		}
+		allRefs = append(allRefs,
+			folders.VmFolder.Reference(),
+			folders.HostFolder.Reference(),
+			folders.DatastoreFolder.Reference(),
+			folders.NetworkFolder.Reference(),
+		)
+		vmFolderRefs = append(vmFolderRefs, folders.VmFolder.Reference())
 	}
 
 	authManager := object.NewAuthorizationManager(vimClient)
@@ -271,11 +278,10 @@ func (s *CredentialsService) GetCapabilities(ctx context.Context) (*models.Capab
 		return models.OperationCapability{Enabled: false, MissingPrivileges: missing}
 	}
 
-	vmFolderRef := folders.VmFolder.Reference()
 	status := &models.CapabilityStatus{
 		Collector:  checkPrivileges(allRefs, models.CollectorRequiredPrivileges),
-		Inspector:  checkPrivileges([]types.ManagedObjectReference{vmFolderRef}, models.InspectorRequiredPrivileges),
-		Forecaster: checkPrivileges(allRefs, models.ForecasterRequiredPrivileges),
+		Inspector:  checkPrivileges(vmFolderRefs, models.InspectorRequiredPrivileges),
+		Forecaster: checkPrivileges(vmFolderRefs, models.ForecasterRequiredPrivileges),
 	}
 
 	zap.S().Named("credentials").Infow("capability check complete",
